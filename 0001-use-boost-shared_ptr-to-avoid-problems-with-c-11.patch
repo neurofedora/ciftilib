@@ -1,0 +1,209 @@
+From 8c2f88b42f15d9ecde3ce5302a531dfcf7477513 Mon Sep 17 00:00:00 2001
+From: Igor Gnatenko <i.gnatenko.brain@gmail.com>
+Date: Wed, 4 Nov 2015 09:17:03 +0100
+Subject: [PATCH] use boost::shared_ptr to avoid problems with c++11
+
+Reference: https://github.com/Washington-University/CiftiLib/issues/1
+Signed-off-by: Igor Gnatenko <i.gnatenko.brain@gmail.com>
+---
+ Cifti/CiftiFile.cxx   | 14 +++++++-------
+ Cifti/CiftiXML.cxx    | 32 ++++++++++++++++----------------
+ Common/BinaryFile.cxx |  6 +++---
+ Nifti/NiftiHeader.cxx |  2 +-
+ 4 files changed, 27 insertions(+), 27 deletions(-)
+
+diff --git a/Cifti/CiftiFile.cxx b/Cifti/CiftiFile.cxx
+index 0cb8fcb..a5c2a88 100644
+--- a/Cifti/CiftiFile.cxx
++++ b/Cifti/CiftiFile.cxx
+@@ -130,7 +130,7 @@ void CiftiFile::openFile(const AString& fileName)
+     m_writingImpl.reset();
+     m_readingImpl.reset();//to make sure it closes everything first, even if the open throws
+     m_dims.clear();
+-    shared_ptr<CiftiOnDiskImpl> newRead(new CiftiOnDiskImpl(pathToAbsolute(fileName)));//this constructor opens existing file read-only
++    boost::shared_ptr<CiftiOnDiskImpl> newRead(new CiftiOnDiskImpl(pathToAbsolute(fileName)));//this constructor opens existing file read-only
+     m_readingImpl = newRead;//it should be noted that if the constructor throws (if the file isn't readable), new guarantees the memory allocated for the object will be freed
+     m_xml = newRead->getCiftiXML();
+     m_dims = m_xml.getDimensions();
+@@ -154,12 +154,12 @@ void CiftiFile::writeFile(const AString& fileName, const CiftiVersion& writingVe
+     {//empty string test is so that we don't say collision if both are nonexistant - could happen if file is removed/unlinked while reading on some filesystems
+         if (m_onDiskVersion == writingVersion) return;//don't need to copy to itself
+         collision = true;//we need to copy to memory temporarily
+-        shared_ptr<WriteImplInterface> tempMemory(new CiftiMemoryImpl(m_xml));//because tempRead is a ReadImpl, can't be used to copy to
++        boost::shared_ptr<WriteImplInterface> tempMemory(new CiftiMemoryImpl(m_xml));//because tempRead is a ReadImpl, can't be used to copy to
+         copyImplData(m_readingImpl.get(), tempMemory.get(), m_dims);
+         m_readingImpl = tempMemory;//we are about to make the old reading impl very unhappy, replace it so that if we get an error while writing, we hang onto the memory version
+         m_writingImpl.reset();//and make it re-magic the writing implementation again if it tries to write again
+     }
+-    shared_ptr<WriteImplInterface> tempWrite(new CiftiOnDiskImpl(pathToAbsolute(fileName), m_xml, writingVersion));
++    boost::shared_ptr<WriteImplInterface> tempWrite(new CiftiOnDiskImpl(pathToAbsolute(fileName), m_xml, writingVersion));
+     copyImplData(m_readingImpl.get(), tempWrite.get(), m_dims);
+     if (collision)//if we rewrote the file, we need the handle to the new file, and to dump the temporary in-memory version
+     {
+@@ -180,7 +180,7 @@ void CiftiFile::convertToInMemory()
+         m_writingFile = "";//make sure it doesn't do on-disk when set...() is called
+         return;
+     }
+-    shared_ptr<WriteImplInterface> tempWrite(new CiftiMemoryImpl(m_xml));//if we get an error while reading, free the memory immediately, and don't leave m_readingImpl and m_writingImpl pointing to different things
++    boost::shared_ptr<WriteImplInterface> tempWrite(new CiftiMemoryImpl(m_xml));//if we get an error while reading, free the memory immediately, and don't leave m_readingImpl and m_writingImpl pointing to different things
+     copyImplData(m_readingImpl.get(), tempWrite.get(), m_dims);
+     m_writingImpl = tempWrite;
+     m_readingImpl = tempWrite;
+@@ -274,7 +274,7 @@ void CiftiFile::verifyWriteImpl()
+         {
+             convertToInMemory();
+         } else {
+-            m_writingImpl = shared_ptr<CiftiMemoryImpl>(new CiftiMemoryImpl(m_xml));
++            m_writingImpl = boost::shared_ptr<CiftiMemoryImpl>(new CiftiMemoryImpl(m_xml));
+         }
+     } else {//NOTE: m_onDiskVersion gets set in setWritingFile
+         if (m_readingImpl != NULL)
+@@ -289,7 +289,7 @@ void CiftiFile::verifyWriteImpl()
+                 }
+             }
+         }
+-        m_writingImpl = shared_ptr<CiftiOnDiskImpl>(new CiftiOnDiskImpl(m_writingFile, m_xml, m_onDiskVersion));//this constructor makes new file for writing
++        m_writingImpl = boost::shared_ptr<CiftiOnDiskImpl>(new CiftiOnDiskImpl(m_writingFile, m_xml, m_onDiskVersion));//this constructor makes new file for writing
+         if (m_readingImpl != NULL)
+         {
+             copyImplData(m_readingImpl.get(), m_writingImpl.get(), m_dims);
+@@ -413,7 +413,7 @@ CiftiOnDiskImpl::CiftiOnDiskImpl(const AString& filename, const CiftiXML& xml, c
+     char intentName[16];
+     int32_t intentCode = xml.getIntentInfo(version, intentName);
+     outHeader.setIntent(intentCode, intentName);
+-    shared_ptr<NiftiExtension> outExtension(new NiftiExtension());
++    boost::shared_ptr<NiftiExtension> outExtension(new NiftiExtension());
+     outExtension->m_ecode = NIFTI_ECODE_CIFTI;
+     outExtension->m_bytes = xml.writeXMLToVector(version);
+     outHeader.m_extensions.push_back(outExtension);
+diff --git a/Cifti/CiftiXML.cxx b/Cifti/CiftiXML.cxx
+index ca0b4e9..30cbb99 100644
+--- a/Cifti/CiftiXML.cxx
++++ b/Cifti/CiftiXML.cxx
+@@ -55,7 +55,7 @@ void CiftiXML::copyHelper(const CiftiXML& rhs)
+     m_indexMaps.resize(numDims);
+     for (int i = 0; i < numDims; ++i)
+     {
+-        m_indexMaps[i] = shared_ptr<CiftiMappingType>(rhs.m_indexMaps[i]->clone());
++        m_indexMaps[i] = boost::shared_ptr<CiftiMappingType>(rhs.m_indexMaps[i]->clone());
+     }
+     m_parsedVersion = rhs.m_parsedVersion;
+     m_fileMetaData = rhs.m_fileMetaData;
+@@ -204,7 +204,7 @@ CiftiMappingType::MappingType CiftiXML::getMappingType(const int& direction) con
+ void CiftiXML::setMap(const int& direction, const CiftiMappingType& mapIn)
+ {
+     CiftiAssertVectorIndex(m_indexMaps, direction);
+-    m_indexMaps[direction] = shared_ptr<CiftiMappingType>(mapIn.clone());
++    m_indexMaps[direction] = boost::shared_ptr<CiftiMappingType>(mapIn.clone());
+ }
+ 
+ void CiftiXML::setNumberOfDimensions(const int& num)
+@@ -771,19 +771,19 @@ void CiftiXML::parseMatrixIndicesMap1(XmlReader& xml)
+         }
+         used.insert(parsed);
+     }
+-    shared_ptr<CiftiMappingType> toRead;
++    boost::shared_ptr<CiftiMappingType> toRead;
+     AString type = myAttrs.mandatoryVals[1];
+     if (type == "CIFTI_INDEX_TYPE_BRAIN_MODELS")
+     {
+-        toRead = shared_ptr<CiftiBrainModelsMap>(new CiftiBrainModelsMap());
++        toRead = boost::shared_ptr<CiftiBrainModelsMap>(new CiftiBrainModelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_TIME_POINTS") {
+-        toRead = shared_ptr<CiftiSeriesMap>(new CiftiSeriesMap());
++        toRead = boost::shared_ptr<CiftiSeriesMap>(new CiftiSeriesMap());
+     } else if (type == "CIFTI_INDEX_TYPE_LABELS") {//this and below are nonstandard
+-        toRead = shared_ptr<CiftiLabelsMap>(new CiftiLabelsMap());
++        toRead = boost::shared_ptr<CiftiLabelsMap>(new CiftiLabelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_PARCELS") {
+-        toRead = shared_ptr<CiftiParcelsMap>(new CiftiParcelsMap());
++        toRead = boost::shared_ptr<CiftiParcelsMap>(new CiftiParcelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_SCALARS") {
+-        toRead = shared_ptr<CiftiScalarsMap>(new CiftiScalarsMap());
++        toRead = boost::shared_ptr<CiftiScalarsMap>(new CiftiScalarsMap());
+     } else {
+         throw CiftiException("invalid value for IndicesMapToDataType in CIFTI-1: " + type);
+     }
+@@ -801,7 +801,7 @@ void CiftiXML::parseMatrixIndicesMap1(XmlReader& xml)
+             m_indexMaps[*iter] = toRead;
+             first = false;
+         } else {
+-            m_indexMaps[*iter] = shared_ptr<CiftiMappingType>(toRead->clone());//make in-memory information independent per-dimension, rather than dealing with deduplication everywhere
++            m_indexMaps[*iter] = boost::shared_ptr<CiftiMappingType>(toRead->clone());//make in-memory information independent per-dimension, rather than dealing with deduplication everywhere
+         }
+     }
+     CiftiAssert(XmlReader_checkEndElement(xml, "MatrixIndicesMap"));
+@@ -829,19 +829,19 @@ void CiftiXML::parseMatrixIndicesMap2(XmlReader& xml)
+         }
+         used.insert(parsed);
+     }
+-    shared_ptr<CiftiMappingType> toRead;
++    boost::shared_ptr<CiftiMappingType> toRead;
+     AString type = myAttrs.mandatoryVals[1];
+     if (type == "CIFTI_INDEX_TYPE_BRAIN_MODELS")
+     {
+-        toRead = shared_ptr<CiftiBrainModelsMap>(new CiftiBrainModelsMap());
++        toRead = boost::shared_ptr<CiftiBrainModelsMap>(new CiftiBrainModelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_LABELS") {
+-        toRead = shared_ptr<CiftiLabelsMap>(new CiftiLabelsMap());
++        toRead = boost::shared_ptr<CiftiLabelsMap>(new CiftiLabelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_PARCELS") {
+-        toRead = shared_ptr<CiftiParcelsMap>(new CiftiParcelsMap());
++        toRead = boost::shared_ptr<CiftiParcelsMap>(new CiftiParcelsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_SCALARS") {
+-        toRead = shared_ptr<CiftiScalarsMap>(new CiftiScalarsMap());
++        toRead = boost::shared_ptr<CiftiScalarsMap>(new CiftiScalarsMap());
+     } else if (type == "CIFTI_INDEX_TYPE_SERIES") {
+-        toRead = shared_ptr<CiftiSeriesMap>(new CiftiSeriesMap());
++        toRead = boost::shared_ptr<CiftiSeriesMap>(new CiftiSeriesMap());
+     } else {
+         throw CiftiException("invalid value for IndicesMapToDataType in CIFTI-1: " + type);
+     }
+@@ -859,7 +859,7 @@ void CiftiXML::parseMatrixIndicesMap2(XmlReader& xml)
+             m_indexMaps[*iter] = toRead;
+             first = false;
+         } else {
+-            m_indexMaps[*iter] = shared_ptr<CiftiMappingType>(toRead->clone());//make in-memory information independent per-dimension, rather than dealing with deduplication everywhere
++            m_indexMaps[*iter] = boost::shared_ptr<CiftiMappingType>(toRead->clone());//make in-memory information independent per-dimension, rather than dealing with deduplication everywhere
+         }
+     }
+     CiftiAssert(XmlReader_checkEndElement(xml, "MatrixIndicesMap"));
+diff --git a/Common/BinaryFile.cxx b/Common/BinaryFile.cxx
+index 32be79b..27d6c80 100644
+--- a/Common/BinaryFile.cxx
++++ b/Common/BinaryFile.cxx
+@@ -141,15 +141,15 @@ void BinaryFile::open(const AString& filename, const OpenMode& opmode)
+     if (AString_substr(filename, filename.size() - 3) == ".gz")
+     {
+ #ifdef ZLIB_VERSION
+-        m_impl = shared_ptr<ZFileImpl>(new ZFileImpl());
++        m_impl = boost::shared_ptr<ZFileImpl>(new ZFileImpl());
+ #else //ZLIB_VERSION
+         throw CiftiException("can't open .gz file '" + filename + "', compiled without zlib support");
+ #endif //ZLIB_VERSION
+     } else {
+ #ifdef CIFTILIB_USE_QT
+-        m_impl = shared_ptr<QFileImpl>(new QFileImpl());
++        m_impl = boost::shared_ptr<QFileImpl>(new QFileImpl());
+ #else
+-        m_impl = shared_ptr<StrFileImpl>(new StrFileImpl());
++        m_impl = boost::shared_ptr<StrFileImpl>(new StrFileImpl());
+ #endif
+     }
+     m_impl->open(filename, opmode);
+diff --git a/Nifti/NiftiHeader.cxx b/Nifti/NiftiHeader.cxx
+index f47dd72..5a3fc75 100644
+--- a/Nifti/NiftiHeader.cxx
++++ b/Nifti/NiftiHeader.cxx
+@@ -500,7 +500,7 @@ void NiftiHeader::read(BinaryFile& inFile)
+             inFile.read(&ecode, sizeof(int32_t));
+             if (swapped) ByteSwapping::swap(ecode);
+             if (esize < 8 || esize + extStart > m_header.vox_offset) break;
+-            shared_ptr<NiftiExtension> tempExtension(new NiftiExtension());
++            boost::shared_ptr<NiftiExtension> tempExtension(new NiftiExtension());
+             if ((size_t)esize > 2 * sizeof(int32_t))//don't try to read 0 bytes
+             {
+                 tempExtension->m_bytes.resize(esize - 2 * sizeof(int32_t));
+-- 
+2.6.2
+
